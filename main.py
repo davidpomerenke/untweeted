@@ -243,11 +243,17 @@ def post_record(record):
         doc.close()
 
     MAX_LENGTH = 300
+    BASE_LENGTH = 80
+    title = (
+        record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
+        if len(record["title"]) + BASE_LENGTH > MAX_LENGTH
+        else record["title"]
+    )
     date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
     text = (
         client_utils.TextBuilder()
         .text(f"New report released! From {date_}:\n\n")
-        .text(f"❞ {record['title']}")
+        .text(f"❞ {title}")
         .text("\n\n→ ")
     )
     text.link(
@@ -296,8 +302,10 @@ def post_record(record):
         for kw in record["keywords"]:
             if len(text.build_text() + kw.replace(" ", "")) + 2 < MAX_LENGTH:
                 text.tag(
-                    "#" + kw.title().replace(" ", "").replace("-", "") + " ",
-                    kw.lower().replace(" ", "").replace("-", ""),
+                    "#"
+                    + kw.replace(" ", "").replace("-", "").replace("'", "").title()
+                    + " ",
+                    kw.replace(" ", "").replace("-", "").replace("'", "").lower(),
                 )
         _post3 = client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
 

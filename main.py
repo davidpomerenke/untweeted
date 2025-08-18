@@ -125,14 +125,16 @@ def pdf_to_image(doc, page):
         #     img.thumbnail((800, 1000), PilImage.Resampling.LANCZOS)
 
         buf = io.BytesIO()
+        quality = 100
         img.save(
-            buf, format="JPEG", quality=100, optimize=True
-        )  # JPEG with compression
-
-        # # Check size and compress more if needed
-        # if len(buf.getvalue()) > 900000:  # 900KB
-        #     buf = io.BytesIO()
-        #     img.save(buf, format="JPEG", quality=60, optimize=True)
+            buf, format="JPEG", quality=quality, optimize=True
+        )
+        # Check size and compress more if needed
+        while len(buf.getvalue()) > 950_000:  # 950KB
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            quality -= 10
+            print(quality, len(buf.getvalue()))
 
         return buf.getvalue()
     except Exception as e:
@@ -303,9 +305,9 @@ def post_record(record):
             if len(text.build_text() + kw.replace(" ", "")) + 2 < MAX_LENGTH:
                 text.tag(
                     "#"
-                    + kw.replace(" ", "").replace("-", "").replace("'", "").title()
+                    + kw.replace("'", "").title().replace(" ", "").replace("-", "")
                     + " ",
-                    kw.replace(" ", "").replace("-", "").replace("'", "").lower(),
+                    kw.replace("'", "").lower().replace(" ", "").replace("-", ""),
                 )
         _post3 = client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
 

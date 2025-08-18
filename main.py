@@ -194,15 +194,15 @@ xml = requests.get(url, params=params).text
 records = extract_marc_data(xml)[:10]
 
 client = Client("https://bsky.social")
-profile = client.login("unreported.bsky.social", os.environ["BSKY_PASSWORD"])
+profile = client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
 
 response = client.get_author_feed(
-    "unreported.bsky.social", include_pins=False, filter="posts_no_replies"
+    "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
 )
 feed = response.feed
 while response.cursor is not None:
     response = client.get_author_feed(
-        "unreported.bsky.social", include_pins=False, filter="posts_no_replies"
+        "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
     )
     feed += response.feed
 

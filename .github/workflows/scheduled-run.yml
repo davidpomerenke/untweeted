@@ -3,7 +3,7 @@ name: Scheduled Script Run
 on:
   push:
   schedule:
-    - cron: '31 * * * *'  # Run at 31 minutes past every hour
+    - cron: '31 */3 * * *'  # Run at 31 minutes past every 3 hours
   workflow_dispatch:  # Allow manual triggering
 
 jobs:

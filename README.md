@@ -1,3 +1,3 @@
-# _UN_ REPORTED
+# UNREPORTED 🇺🇳📓
 
-x/bsky/... bot that posts about new reports as they are released
+Bluesky + X bot that posts about new reports as they are released.

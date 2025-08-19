@@ -7,6 +7,7 @@ from io import BytesIO
 
 import pymupdf
 import requests
+import tweepy
 from atproto import Client, client_utils
 from atproto_client.models.app.bsky.embed.images import Image, Main
 from atproto_client.models.app.bsky.feed.post import ReplyRef
@@ -126,9 +127,7 @@ def pdf_to_image(doc, page):
 
         buf = io.BytesIO()
         quality = 100
-        img.save(
-            buf, format="JPEG", quality=quality, optimize=True
-        )
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
         # Check size and compress more if needed
         while len(buf.getvalue()) > 950_000:  # 950KB
             buf = io.BytesIO()
@@ -140,6 +139,38 @@ def pdf_to_image(doc, page):
     except Exception as e:
         print(f"PDF error: {e}")
         return None
+
+
+def get_summary(record):
+    try:
+        response = requests.get(
+            f"https://documents.un.org/api/symbol/access?s={record['symbol']}&l=en&t=docx"
+        )
+        doc = Document(BytesIO(response.content))
+        tables = [c for c in doc.iter_inner_content() if isinstance(c, Table)]
+        for table in tables:
+            row_texts = [
+                " | ".join([c.text.strip() for c in row.cells]) for row in table.rows
+            ]
+            if row_texts[0].strip() == "Summary":
+                return row_texts[1:]
+        return []
+    except Exception:
+        return []
+
+
+def get_images(record, page_nrs=[0, 1]):
+    if not record["pdf_url"]:
+        return []
+    response = requests.get(record["pdf_url"], timeout=30)
+    response.raise_for_status()
+    if not response.content:
+        return None
+    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    images = [pdf_to_image(doc, page_nr) for page_nr in page_nrs]
+    images = [image for image in images if image is not None]
+    doc.close()
+    return images
 
 
 def chunk_text(text, max_length):
@@ -181,68 +212,45 @@ def chunk_text(text, max_length):
     return chunks
 
 
-url = "https://digitallibrary.un.org/search"
-params = {
-    "cc": "Reports",
-    "ln": "en",
-    "sf": "year",
-    "rg": 100,
-    "c": "Reports",
-    "of": "xm",
-}
-xml = requests.get(url, params=params).text
-records = extract_marc_data(xml)[:10]
+def post_bsky(records):
+    client = Client("https://bsky.social")
+    client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
 
-client = Client("https://bsky.social")
-profile = client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
-
-response = client.get_author_feed(
-    "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
-)
-feed = response.feed
-while response.cursor is not None:
     response = client.get_author_feed(
         "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
     )
-    feed += response.feed
+    feed = response.feed
+    while response.cursor is not None:
+        response = client.get_author_feed(
+            "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
+        )
+        feed += response.feed
 
-entries = [entry.post.record.facets for entry in feed]
-facets = [facet for facets in entries for facet in facets]
-links = [
-    feat.uri for facet in facets for feat in facet.features if isinstance(feat, Link)
-]
+    entries = [entry.post.record.facets for entry in feed]
+    facets = [facet for facets in entries for facet in facets]
+    links = [
+        feat.uri
+        for facet in facets
+        for feat in facet.features
+        if isinstance(feat, Link)
+    ]
 
-# for entry in feed:
-#     client.delete_post(entry.post.uri)
+    # for entry in feed:
+    #     client.delete_post(entry.post.uri)
 
-unposted = [
-    record for record in records if not any(record["id"] in link for link in links)
-]
+    unposted = [
+        record for record in records if not any(record["id"] in link for link in links)
+    ]
+    if not unposted:
+        return
 
+    record = unposted[-1]
 
-def post_record(record):
     images = []
-    if record["pdf_url"]:
-        response = requests.get(record["pdf_url"], timeout=30)
-        response.raise_for_status()
-        if not response.content:
-            return None
-        doc = pymupdf.open(stream=response.content, filetype="pdf")
-        bytes = pdf_to_image(doc, 0)
-        if bytes:
-            ref = client.upload_blob(bytes)
-            image = Image(
-                alt="Screenshot of the first page of the report", image=ref.blob
-            )
-            images.append(image)
-        bytes = pdf_to_image(doc, 1)
-        if bytes:
-            ref = client.upload_blob(bytes)
-            image = Image(
-                alt="Screenshot of the second page of the report", image=ref.blob
-            )
-            images.append(image)
-        doc.close()
+    for i, image in enumerate(get_images(record)):
+        ref = client.upload_blob(bytes)
+        image = Image(alt=f"Screenshot of page {i} of the report", image=ref.blob)
+        images.append(image)
 
     MAX_LENGTH = 300
     BASE_LENGTH = 80
@@ -274,30 +282,11 @@ def post_record(record):
             post2 = client.send_post(chunk, reply_to=ReplyRef(parent=prev, root=root))
             prev = StrongRef(cid=post2.cid, uri=post2.uri)
 
-    # try to extract summary from DOCX (but neither DOCX nor summary are always available)
-    summary_detailed = None
-    try:
-        response = requests.get(
-            f"https://documents.un.org/api/symbol/access?s={record['symbol']}&l=en&t=docx"
-        )
-        doc = Document(BytesIO(response.content))
-        tables = [c for c in doc.iter_inner_content() if isinstance(c, Table)]
-        for table in tables:
-            row_texts = [
-                " | ".join([c.text.strip() for c in row.cells]) for row in table.rows
-            ]
-            if row_texts[0].strip() == "Summary":
-                summary_detailed = row_texts[1:]
-                break
-        for para in summary_detailed:
-            chunks = chunk_text(para, MAX_LENGTH - 10)
-            for chunk in chunks:
-                postn = client.send_post(
-                    chunk, reply_to=ReplyRef(parent=prev, root=root)
-                )
-                prev = StrongRef(cid=postn.cid, uri=postn.uri)
-    except Exception as e:
-        pass
+    for para in get_summary(record):
+        chunks = chunk_text(para, MAX_LENGTH - 10)
+        for chunk in chunks:
+            postn = client.send_post(chunk, reply_to=ReplyRef(parent=prev, root=root))
+            prev = StrongRef(cid=postn.cid, uri=postn.uri)
 
     if len(record["keywords"]) > 0:
         text = client_utils.TextBuilder()
@@ -309,9 +298,102 @@ def post_record(record):
                     + " ",
                     kw.replace("'", "").lower().replace(" ", "").replace("-", ""),
                 )
-        _post3 = client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
+        client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
 
 
-for record in unposted[::-1][:1]:
-    print(record["date"], record["title"])
-    post_record(record)
+def post_x(records):
+    client = tweepy.Client(
+        bearer_token=os.environ["X_BEARER_TOKEN"],
+        consumer_key=os.environ["X_API_KEY"],
+        consumer_secret=os.environ["X_API_KEY_SECRET"],
+        access_token=os.environ["X_ACCESS_TOKEN"],
+        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+    )
+    user_id = client.get_me().data.id
+    tweets = [t.text for t in client.get_users_tweets(user_id, user_auth=True).data or []]
+    links = [re.findall(r"(http\S*)(\s|$)", t) for t in tweets]
+    links = [l[0] for ls in links for l in ls]
+    links = [
+        requests.get(link, allow_redirects=True, stream=True).url for link in links
+    ]
+    unposted = [
+        record for record in records if not any(record["id"] in link for link in links)
+    ]
+    if not unposted:
+        return
+
+    record = unposted[-1]
+
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key=os.environ["X_API_KEY"],
+        consumer_secret=os.environ["X_API_KEY_SECRET"],
+        access_token=os.environ["X_ACCESS_TOKEN"],
+        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+    )
+    api = tweepy.API(auth)
+
+    MAX_LENGTH = 300
+    BASE_LENGTH = 80
+    title = (
+        record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
+        if len(record["title"]) + BASE_LENGTH > MAX_LENGTH
+        else record["title"]
+    )
+    date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
+    text = (
+        f"New report released! From {date_}:\n\n"
+        f"❞ {title}\n\n"
+        f"→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf ({record['pages']})\n\n"
+    )
+    media_ids = []
+    for i, image in enumerate(get_images(record)):
+        media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
+        media_ids.append(media.media_id)
+    prev = client.create_tweet(text=text, media_ids=media_ids)
+
+    for summary_text in record["summary"]:
+        chunks = chunk_text(summary_text, MAX_LENGTH - 10)
+        for chunk in chunks:
+            prev = client.create_tweet(text=chunk, in_reply_to_tweet_id=prev.data["id"])
+
+    for para in get_summary(record):
+        chunks = chunk_text(para, MAX_LENGTH - 10)
+        for chunk in chunks:
+            prev = client.create_tweet(text=chunk, in_reply_to_tweet_id=prev.data["id"])
+
+    if len(record["keywords"]) > 0:
+        text = ""
+        for kw in record["keywords"]:
+            if len(text + kw.replace(" ", "")) + 2 < MAX_LENGTH:
+                tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
+                text += f"#{tag} "
+        client.create_tweet(text=text, in_reply_to_tweet_id=prev.data["id"])
+
+
+if __name__ == "__main__":
+    print("retrieving reports ...")
+    xml = requests.get(
+        "https://digitallibrary.un.org/search",
+        params={
+            "cc": "Reports",
+            "ln": "en",
+            "sf": "year",
+            "rg": 10,
+            "c": "Reports",
+            "of": "xm",
+        },
+    ).text
+    records = extract_marc_data(xml)
+    exceptions = []
+    try:
+        print("posting on bsky ...")
+        post_bsky(records)
+    except Exception as e:
+        exceptions.append(e)
+    try:
+        print("posting on x ...")
+        post_x(records)
+    except Exception as e:
+        exceptions.append(e)
+    for e in exceptions:
+        raise e

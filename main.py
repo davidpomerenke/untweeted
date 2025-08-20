@@ -165,7 +165,7 @@ def get_images(record, page_nrs=[0, 1]):
     response = requests.get(record["pdf_url"], timeout=30)
     response.raise_for_status()
     if not response.content:
-        return None
+        return []
     doc = pymupdf.open(stream=response.content, filetype="pdf")
     images = [pdf_to_image(doc, page_nr) for page_nr in page_nrs]
     images = [image for image in images if image is not None]
@@ -248,7 +248,7 @@ def post_bsky(records):
 
     images = []
     for i, image in enumerate(get_images(record)):
-        ref = client.upload_blob(bytes)
+        ref = client.upload_blob(image)
         image = Image(alt=f"Screenshot of page {i} of the report", image=ref.blob)
         images.append(image)
 

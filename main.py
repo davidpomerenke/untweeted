@@ -17,6 +17,7 @@ from docx import Document
 from docx.table import Table
 from dotenv import load_dotenv
 from PIL import Image as PilImage
+from tweepy.errors import TooManyRequests
 
 load_dotenv()
 
@@ -393,6 +394,8 @@ if __name__ == "__main__":
     try:
         print("posting on x ...")
         post_x(records)
+    except TooManyRequests as e:
+        print(e)
     except Exception as e:
         exceptions.append(e)
     for e in exceptions:

@@ -28,90 +28,42 @@ def extract_marc_data(xml_content):
 
     results = []
     for record in root.findall(".//m:record", ns):
-        # Extract title (245 a + b)
-        title_field = record.find('.//m:datafield[@tag="245"]', ns)
-        title = ""
-        if title_field is not None:
-            parts = []
-            for code in ["a", "b", "c"]:
-                sf = title_field.find(f'm:subfield[@code="{code}"]', ns)
-                if sf is not None and sf.text:
-                    parts.append(sf.text.strip(":").strip("/").strip())
-            title = " – ".join(parts)
 
-        # Extract symbol (191 a)
-        symbol_field = record.find(
-            './/m:datafield[@tag="191"]/m:subfield[@code="a"]', ns
-        )
-        symbol = (
-            symbol_field.text.strip()
-            if symbol_field is not None and symbol_field.text
-            else ""
-        )
-
-        # Extract date (269 a)
-        date_field = record.find('.//m:datafield[@tag="269"]/m:subfield[@code="a"]', ns)
-        date = (
-            date_field.text.strip()
-            if date_field is not None and date_field.text
-            else ""
-        )
-
-        # Extract ID (001)
-        id_field = record.find('.//m:controlfield[@tag="001"]', ns)
-        id = id_field.text.strip() if id_field is not None and id_field.text else ""
-
-        # Extract pages (300 a)
-        pages_field = record.find(
-            './/m:datafield[@tag="300"]/m:subfield[@code="a"]', ns
-        )
-        pages = (
-            pages_field.text.strip(":").strip()
-            if pages_field is not None and pages_field.text
-            else ""
-        )
-
-        # Extract summary (500 a) - multiple entries
-        summary_fields = record.findall(
-            './/m:datafield[@tag="500"]/m:subfield[@code="a"]', ns
-        )
-        summary = [field.text.strip() for field in summary_fields if field.text]
-
-        # Extract subject keywords (650 a)
-        keywords = []
-        for keyword_field in record.findall(
-            './/m:datafield[@tag="650"]/m:subfield[@code="a"]', ns
-        ):
-            if keyword_field.text:
-                keywords.append(keyword_field.text.strip())
-
-        # Extract English PDF URL (856 u where y="English")
-        pdf_url = ""
-        for link_field in record.findall('.//m:datafield[@tag="856"]', ns):
-            url_field = link_field.find('m:subfield[@code="u"]', ns)
-            lang_field = link_field.find('m:subfield[@code="y"]', ns)
-            if (
-                url_field is not None
-                and lang_field is not None
-                and lang_field.text == "English"
-            ):
-                pdf_url = url_field.text.strip()
-                break
-
-        if title or symbol or date or id:
-            results.append(
-                {
-                    "title": title,
-                    "symbol": symbol,
-                    "date": date,
-                    "id": id,
-                    "pdf_url": pdf_url,
-                    "pages": pages,
-                    "summary": summary,
-                    "keywords": keywords,
-                }
+        def get_field(tag, code=None, multiple=True):
+            query = f'.//m:datafield[@tag="{tag}"]' + (
+                f'/m:subfield[@code="{code}"]' if code else ""
             )
+            fields = record.findall(query, ns)
+            fields = [field.text.strip(":").strip() for field in fields if field.text]
+            if not multiple:
+                fields = fields[0] if fields else None
+            return fields
+    
+        id = record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
+        titles = (
+            get_field(245, "a")
+            + get_field(245, "b")
+            + get_field(245, "c")
+        )
+        titles = [t.strip(":").strip("/").strip() for t in titles]
+        title = " – ".join(titles)
+        pages = get_field("300", "a", False)
+        pages = pages.replace("[", "").replace("]", "") if pages else None
+        pdf_urls = get_field("856", "u")
+        pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
+        pdf_url = pdf_urls[0] if pdf_urls else None
 
+        record = {
+            "id": id,
+            "symbol": get_field("191", "a", False),
+            "title": title,
+            "date": get_field("269", "a", False),
+            "pages": pages,
+            "summary": get_field("500", "a"),
+            "keywords": get_field("650", "a"),
+            "pdf_url": pdf_url,
+        }
+        results.append(record)
     return results
 
 

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -38,13 +39,9 @@ def extract_marc_data(xml_content):
             if not multiple:
                 fields = fields[0] if fields else None
             return fields
-    
+
         id = record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
-        titles = (
-            get_field(245, "a")
-            + get_field(245, "b")
-            + get_field(245, "c")
-        )
+        titles = get_field(245, "a") + get_field(245, "b") + get_field(245, "c")
         titles = [t.strip(":").strip("/").strip() for t in titles]
         title = " – ".join(titles)
         pages = get_field("300", "a", False)
@@ -263,15 +260,9 @@ def post_x(records):
         access_token=os.environ["X_ACCESS_TOKEN"],
         access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
     )
-    user_id = client.get_me().data.id
-    tweets = [t.text for t in client.get_users_tweets(user_id, user_auth=True).data or []]
-    links = [re.findall(r"(http\S*)(\s|$)", t) for t in tweets]
-    links = [l[0] for ls in links for l in ls]
-    links = [
-        requests.get(link, allow_redirects=True, stream=True).url for link in links
-    ]
+    posted = json.loads(open("posted.json"))["x"]
     unposted = [
-        record for record in records if not any(record["id"] in link for link in links)
+        record for record in records if not any(record["id"] in link for link in posted)
     ]
     if not unposted:
         return
@@ -322,6 +313,7 @@ def post_x(records):
                 tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
                 text += f"#{tag} "
         client.create_tweet(text=text, in_reply_to_tweet_id=prev.data["id"])
+    json.dump([record["id"]] + posted, open("posted.json", "w"), indent=2)
 
 
 if __name__ == "__main__":

@@ -28,3 +28,11 @@ jobs:
         X_API_KEY_SECRET: ${{ secrets.X_API_KEY_SECRET }}
         X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
         X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+    
+    - name: Commit updated CSV
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add posted_reports.json
+        git diff --staged --quiet || git commit -m "Update posted reports CSV [skip ci]"
+        git push

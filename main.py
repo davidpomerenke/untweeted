@@ -2,8 +2,9 @@ import io
 import json
 import os
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
+from time import sleep
 
 import pymupdf
 import pysbd
@@ -130,7 +131,7 @@ def chunk_text(text, max_length):
 
     seg = pysbd.Segmenter(language="en", clean=False)
     abbrev_instance = seg.language_module.Abbreviation()
-    abbrev_instance.ABBREVIATIONS.extend(['paras', 'pp', 'p'])
+    abbrev_instance.ABBREVIATIONS.extend(["paras", "pp", "p"])
     sentences = seg.segment(text)
 
     for sentence in sentences:
@@ -259,7 +260,7 @@ def post_x(records):
         access_token=os.environ["X_ACCESS_TOKEN"],
         access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
     )
-    posted = json.loads(open("posted.json"))["x"]
+    posted = json.load(open("posted.json"))["x"]
     unposted = [
         record for record in records if not any(record["id"] in link for link in posted)
     ]
@@ -276,7 +277,19 @@ def post_x(records):
     )
     api = tweepy.API(auth)
 
-    MAX_LENGTH = 300
+    def tweet_and_log(text, prev=None, posted=[], media_ids=None):
+        prev = client.create_tweet(
+            text=text,
+            media_ids=media_ids,
+            in_reply_to_tweet_id=prev.data["id"] if prev else None,
+        )
+        posted = json.load(open("posted.json"))["x"]
+        posted += [[record["id"], datetime.now().isoformat()]]
+        json.dump({"x": posted}, open("posted.json", "w"), indent=2)
+        sleep(1)
+        return prev, posted
+
+    MAX_LENGTH = 280
     BASE_LENGTH = 80
     title = (
         record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
@@ -293,17 +306,17 @@ def post_x(records):
     for i, image in enumerate(get_images(record)):
         media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
         media_ids.append(media.media_id)
-    prev = client.create_tweet(text=text, media_ids=media_ids)
+    prev, posted = tweet_and_log(text, None, posted, media_ids=media_ids)
 
     for summary_text in record["summary"]:
         chunks = chunk_text(summary_text, MAX_LENGTH - 10)
         for chunk in chunks:
-            prev = client.create_tweet(text=chunk, in_reply_to_tweet_id=prev.data["id"])
+            prev, posted = tweet_and_log(chunk, prev, posted)
 
     for para in get_summary(record):
         chunks = chunk_text(para, MAX_LENGTH - 10)
         for chunk in chunks:
-            prev = client.create_tweet(text=chunk, in_reply_to_tweet_id=prev.data["id"])
+            prev, posted = tweet_and_log(chunk, prev, posted)
 
     if len(record["keywords"]) > 0:
         text = ""
@@ -311,8 +324,7 @@ def post_x(records):
             if len(text + kw.replace(" ", "")) + 2 < MAX_LENGTH:
                 tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
                 text += f"#{tag} "
-        client.create_tweet(text=text, in_reply_to_tweet_id=prev.data["id"])
-    json.dump([record["id"]] + posted, open("posted.json", "w"), indent=2)
+        prev, posted = tweet_and_log(text, prev, posted)
 
 
 if __name__ == "__main__":

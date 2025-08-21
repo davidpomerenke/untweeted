@@ -1,12 +1,12 @@
 import io
 import json
 import os
-import re
 import xml.etree.ElementTree as ET
 from datetime import date
 from io import BytesIO
 
 import pymupdf
+import pysbd
 import requests
 import tweepy
 from atproto import Client, client_utils
@@ -128,11 +128,10 @@ def chunk_text(text, max_length):
     """Split text by sentences first, then by words if needed."""
     chunks = []
 
-    # Split by sentences (periods followed by space or end, but not after p., pp., paras.)
-    sentences = re.split(r"(?<!\bp)(?<!\bpp)(?<!paras)\.(?:\s|$)", text)
-    sentences = [s.strip() + "." for s in sentences if s.strip()]
-    if sentences and sentences[-1] == ".":
-        sentences.pop()  # Remove empty last element
+    seg = pysbd.Segmenter(language="en", clean=False)
+    abbrev_instance = seg.language_module.Abbreviation()
+    abbrev_instance.ABBREVIATIONS.extend(['paras', 'pp', 'p'])
+    sentences = seg.segment(text)
 
     for sentence in sentences:
         if len(sentence) <= max_length:

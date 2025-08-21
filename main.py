@@ -51,7 +51,8 @@ def extract_marc_data(xml_content):
         pages = pages.replace("[", "").replace("]", "") if pages else None
         pdf_urls = get_field("856", "u")
         pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
-        pdf_url = pdf_urls[0] if pdf_urls else None
+        if not pdf_urls:
+            continue
 
         record = {
             "id": id,
@@ -61,7 +62,7 @@ def extract_marc_data(xml_content):
             "pages": pages,
             "summary": get_field("500", "a"),
             "keywords": get_field("650", "a"),
-            "pdf_url": pdf_url,
+            "pdf_url": pdf_urls[0],
         }
         results.append(record)
     return results

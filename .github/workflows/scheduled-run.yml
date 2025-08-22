@@ -33,6 +33,6 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add posted_reports.json
+        git add posted.json
         git diff --staged --quiet || git commit -m "Update posted reports CSV [skip ci]"
         git push

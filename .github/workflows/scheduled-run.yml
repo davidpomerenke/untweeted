@@ -34,6 +34,7 @@ jobs:
         X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
     
     - name: Commit updated CSV
+      if: always()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |

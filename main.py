@@ -261,9 +261,7 @@ def post_x(records):
         access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
     )
     posted = json.load(open("posted.json"))["x"]
-    unposted = [
-        record for record in records if not any(record["id"] in link for link in posted)
-    ]
+    unposted = [record for record in records if record["id"] not in posted]
     if not unposted:
         return
 
@@ -284,7 +282,7 @@ def post_x(records):
             in_reply_to_tweet_id=prev.data["id"] if prev else None,
         )
         posted = json.load(open("posted.json"))["x"]
-        posted += [[record["id"], datetime.now().isoformat()]]
+        posted = [record["id"]] + posted  # , datetime.now().isoformat()]]
         json.dump({"x": posted}, open("posted.json", "w"), indent=2)
         sleep(1)
         return prev, posted

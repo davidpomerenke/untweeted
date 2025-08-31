@@ -196,6 +196,7 @@ def post_bsky(records):
         return
 
     record = unposted[-1]
+    print(f"posting {record['title']} from { record['date']} on bsky...")
 
     images = []
     for i, image in enumerate(get_images(record)):
@@ -250,6 +251,7 @@ def post_bsky(records):
                     kw.replace("'", "").lower().replace(" ", "").replace("-", ""),
                 )
         client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
+    print(f"posted {record['title']} from { record['date']} on bsky!")
 
 
 def post_x(records):
@@ -266,6 +268,7 @@ def post_x(records):
         return
 
     record = unposted[-1]
+    print(f"posting {record['title']} from { record['date']} on x...")
 
     auth = tweepy.OAuth1UserHandler(
         consumer_key=os.environ["X_API_KEY"],
@@ -275,54 +278,32 @@ def post_x(records):
     )
     api = tweepy.API(auth)
 
-    def tweet_and_log(text, prev=None, posted=[], media_ids=None):
-        prev = client.create_tweet(
-            text=text,
-            media_ids=media_ids,
-            in_reply_to_tweet_id=prev.data["id"] if prev else None,
-        )
-        posted = json.load(open("posted.json"))["x"]
-        posted = [record["id"]] + posted  # , datetime.now().isoformat()]]
-        json.dump({"x": posted}, open("posted.json", "w"), indent=2)
-        sleep(1)
-        return prev, posted
-
-    MAX_LENGTH = 280
-    BASE_LENGTH = 80
-    title = (
-        record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
-        if len(record["title"]) + BASE_LENGTH > MAX_LENGTH
-        else record["title"]
-    )
     date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
     text = (
         f"New report released! From {date_}:\n\n"
-        f"❞ {title}\n\n"
+        f"❞ {record['title']}\n\n"
         f"→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf ({record['pages']})\n\n"
     )
+    for summary_text in record["summary"]:
+        text += f"{summary_text}\n\n"
+    for para in get_summary(record):
+        text += f"{para}\n\n"
+    if len(record["keywords"]) > 0:
+        text += "\n\n"
+        for kw in record["keywords"]:
+            tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
+            text += f"#{tag} "
     media_ids = []
     for i, image in enumerate(get_images(record)):
         media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
         media_ids.append(media.media_id)
-    prev, posted = tweet_and_log(text, None, posted, media_ids=media_ids)
-
-    for summary_text in record["summary"]:
-        chunks = chunk_text(summary_text, MAX_LENGTH - 10)
-        for chunk in chunks:
-            prev, posted = tweet_and_log(chunk, prev, posted)
-
-    for para in get_summary(record):
-        chunks = chunk_text(para, MAX_LENGTH - 10)
-        for chunk in chunks:
-            prev, posted = tweet_and_log(chunk, prev, posted)
-
-    if len(record["keywords"]) > 0:
-        text = ""
-        for kw in record["keywords"]:
-            if len(text + kw.replace(" ", "")) + 2 < MAX_LENGTH:
-                tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
-                text += f"#{tag} "
-        prev, posted = tweet_and_log(text, prev, posted)
+    client.create_tweet(
+        text=text,
+        media_ids=media_ids,
+    )
+    posted = [record["id"]] + posted  # , datetime.now().isoformat()]]
+    json.dump({"x": posted}, open("posted.json", "w"), indent=2)
+    print(f"posted {record['title']} from { record['date']} on x!")
 
 
 if __name__ == "__main__":

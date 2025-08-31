@@ -43,5 +43,5 @@ jobs:
         git config --local --unset-all http.https://github.com/.extraheader
         git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/davidpomerenke/unreported.git
         git add posted.json
-        git diff --staged --quiet || git commit -m "Update posted reports CSV [skip ci]"
+        git diff --staged --quiet || git commit -m "update posted reports json [skip ci]"
         git push

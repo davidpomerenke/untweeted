@@ -314,7 +314,7 @@ if __name__ == "__main__":
             "cc": "Reports",
             "ln": "en",
             "sf": "year",
-            "rg": 10,
+            "rg": 20,
             "c": "Reports",
             "of": "xm",
         },

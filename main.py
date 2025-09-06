@@ -88,6 +88,7 @@ def marc_xml_to_resolutions(xml_content):
             "title": title,
             "date": _get_field("269", "a", False),
             "votes": votes,
+            "note": _get_field("591", "a"),
             "resolution": _get_field("791", "a", False),
             "draft_resolution": draft_resolution,
         }
@@ -190,6 +191,61 @@ def chunk_text(text, max_length):
     return chunks
 
 
+def get_flags(countries_):
+    countries_ = sorted(countries_, key=lambda c: get_population_a3(c), reverse=True)
+    flags = [countries.get(alpha_3=c).flag for c in countries_]
+    return "".join(flags)
+
+
+def get_votes(record):
+    text = ""
+    if record["votes"]:
+        text += "Votes:\n\n"
+        for letter, vote in [("Y", "Yes"), ("N", "No"), ("A", "Abstention")]:
+            countries_ = [c for c, v in record["votes"].items() if v == letter]
+            text += f"{len(countries_)}x {vote}{': ' if countries_ else ''}{get_flags(countries_)}\n"
+        text += "\n"
+    elif record["note"]:
+        if record["note"][0].lower() == "adopted without vote":
+            text += "Adopted without vote.\n\n"
+    return text
+
+
+def get_draft_resolution(record):
+    if not record["draft_resolution"]:
+        return None
+    xml = requests.get(
+        "https://digitallibrary.un.org/search",
+        params={
+            "cc": "Draft resolutions and decisions",
+            "ln": "en",
+            "p": f"documentsymbol:{record['draft_resolution']}",
+            "sf": "year",
+            "rg": 20,
+            "c": "Draft resolutions and decisions",
+            "of": "xm",
+        },
+    ).text
+    root = ET.fromstring(xml)
+    dr_records = root.findall(".//m:record", ns)
+    assert len(dr_records) <= 1, (
+        f"expecting at most 1 draft resolution record, found {len(dr_records)}"
+    )
+    if not dr_records:
+        return None
+    dr_record = dr_records[0]
+    _get_field = partial(get_field, dr_record)
+    pdf_urls = _get_field("856", "u")
+    pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
+    return {
+        "id": dr_record.find('.//m:controlfield[@tag="001"]', ns).text.strip(),
+        "summary": _get_field("500", "a"),
+        "keywords": _get_field("650", "a"),
+        "authors": _get_field("710", "a"),
+        "pdf_url": pdf_urls[0] if pdf_urls else None,
+    }
+
+
 def post_bsky_report(records):
     client = Client("https://bsky.social")
     client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
@@ -281,46 +337,6 @@ def post_bsky_report(records):
     print(f"posted {record['title']} from {record['date']} on bsky!")
 
 
-def get_flags(countries_):
-    countries_ = sorted(countries_, key=lambda c: get_population_a3(c), reverse=True)
-    flags = [countries.get(alpha_3=c).flag for c in countries_]
-    return "".join(flags)
-
-def get_draft_resolution(record):
-    if not record["draft_resolution"]:
-        return None
-    xml = requests.get(
-        "https://digitallibrary.un.org/search",
-        params={
-            "cc": "Draft resolutions and decisions",
-            "ln": "en",
-            "p": record["draft_resolution"],
-            "sf": "year",
-            "rg": 20,
-            "c": "Draft resolutions and decisions",
-            "of": "xm",
-        },
-    ).text
-    root = ET.fromstring(xml)
-    dr_records = root.findall(".//m:record", ns)
-    assert len(dr_records) <= 1, (
-        f"expecting at most 1 draft resolution record, found {len(dr_records)}"
-    )
-    if not dr_records:
-        return None
-    dr_record = dr_records[0]
-    _get_field = partial(get_field, dr_record)
-    pdf_urls = _get_field("856", "u")
-    pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
-    return {
-        "id": dr_record.find('.//m:controlfield[@tag="001"]', ns).text.strip(),
-        "summary": _get_field("500", "a"),
-        "keywords": _get_field("650", "a"),
-        "authors": _get_field("710", "a"),
-        "pdf_url": pdf_urls[0] if pdf_urls else None
-
-    }
-
 def post_bsky_resolution(records):
     client = Client("https://bsky.social")
     client.login("un-resolutions.bsky.social", os.environ["BSKY_PASSWORD"])
@@ -347,20 +363,16 @@ def post_bsky_resolution(records):
     # for entry in feed:
     #     client.delete_post(entry.post.uri)
 
-    unposted = [
-        record for record in records if not any(record["id"] in link for link in links)
-    ]
-
-    for record in unposted[::-1]:
+    for record in records[::-1]:
         dr_record = get_draft_resolution(record)
-        if dr_record["pdf_url"]:
+        if dr_record["pdf_url"] and not any(dr_record["id"] in link for link in links):
             break
     else:
         return
     print(f"posting resolution {record['title']} from {record['date']} on bsky...")
 
     MAX_LENGTH = 300
-    BASE_LENGTH = 80
+    BASE_LENGTH = 100
     title = (
         record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
         if len(record["title"]) + BASE_LENGTH > MAX_LENGTH
@@ -372,9 +384,13 @@ def post_bsky_resolution(records):
         .text(f"New resolution adopted! From {date_}:\n\n")
         .text(f"❞ {title}")
     )
+
     if dr_record["authors"]:
-        authors = [countries.get(name=a).alpha_3 for a in dr_record["authors"]]
-        text.text(f"\n\nAuthored by {get_flags(authors)}")
+        countries_ = [countries.get(name=a) for a in dr_record["authors"]]
+        countries_ = [c.alpha_3 for c in countries_ if c]
+        if countries_:
+            text.text(f"\n\nAuthored by {get_flags(countries_)}")
+
     text.text("\n\n→ ").link(
         "Read the draft resolution here",
         f"https://digitallibrary.un.org/record/{dr_record['id']}?ln=en&v=pdf",
@@ -390,14 +406,10 @@ def post_bsky_resolution(records):
     root = StrongRef(cid=post.cid, uri=post.uri)
     prev = root
 
-    votes = "Votes\n\n"
-    for letter, vote in [("Y", "Yes"), ("N", "No"), ("A", "Abstention")]:
-        countries_ = [c for c, v in record["votes"].items() if v == letter]
-        votes += f"{len(countries_)}x {vote}{': ' if countries_ else ''}{get_flags(countries_)}\n"
     text = (
         client_utils.TextBuilder()
-        .text(votes)
-        .text("\n→ ")
+        .text(get_votes(record))
+        .text("→ ")
         .link(
             "Find voting data and transcript here",
             f"https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf",
@@ -508,20 +520,16 @@ def post_x_resolution(records):
     api = tweepy.API(auth)
 
     date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
-    text = (
-        f"New resolution adopted! From {date_}:\n\n"
-        f"❞ {record['title']}\n\n"
-    )
+    text = f"New resolution adopted! From {date_}:\n\n❞ {record['title']}\n\n"
     if dr_record["authors"]:
-        authors = [countries.get(name=a).alpha_3 for a in dr_record["authors"]]
-        text += f"Authored by {get_flags(authors)}\n\n"
+        countries_ = [countries.get(name=a) for a in dr_record["authors"]]
+        countries_ = [c.alpha_3 for c in countries_ if c]
+        if countries_:
+            text += f"Authored by {get_flags(countries_)}\n\n"
     text += f"→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf (draft resolution)\n\n"
-    
-    text += "Votes:\n\n"
-    for letter, vote in [("Y", "Yes"), ("N", "No"), ("A", "Abstention")]:
-        countries_ = [c for c, v in record["votes"].items() if v == letter]
-        text += f"{len(countries_)}x {vote}{': ' if countries_ else ''}{get_flags(countries_)}\n"
-    text += f"\n→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf (voting data and transcript)"
+
+    text += get_votes(record)
+    text += f"→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf (voting data and transcript)"
 
     for summary_text in dr_record["summary"]:
         text += f"{summary_text}\n\n"
@@ -573,16 +581,16 @@ if __name__ == "__main__":
     exceptions = []
     try:
         print("posting on bsky ...")
-        # post_bsky_report(reports)
-        # post_bsky_resolution(resolutions)
+        post_bsky_report(reports)
+        post_bsky_resolution(resolutions)
     except Exception as e:
         exceptions.append(e)
     try:
         print("posting on x ...")
         post_x_report(reports)
         post_x_resolution(resolutions)
-    # except (TooManyRequests, Forbidden) as e:
-    #     print(e)
+    except (TooManyRequests, Forbidden) as e:
+        print(e)
     except Exception as e:
         exceptions.append(e)
     for e in exceptions:

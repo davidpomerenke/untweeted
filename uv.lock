@@ -1193,6 +1193,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pycountry"
+version = "24.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/57/c389fa68c50590881a75b7883eeb3dc15e9e73a0fdc001cdd45c13290c92/pycountry-24.6.1.tar.gz", hash = "sha256:b61b3faccea67f87d10c1f2b0fc0be714409e8fcdcc1315613174f6466c10221", size = 6043910, upload-time = "2024-06-01T04:12:15.05Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b1/ec/1fb891d8a2660716aadb2143235481d15ed1cbfe3ad669194690b0604492/pycountry-24.6.1-py3-none-any.whl", hash = "sha256:f1a4fb391cd7214f8eefd39556d740adcc233c778a27f8942c8dca351d6ce06f", size = 6335189, upload-time = "2024-06-01T04:11:49.711Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "2.22"
 source = { registry = "https://pypi.org/simple" }
@@ -1266,6 +1275,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/71/5d/e8f88cd5a45b8f5fa6590ce8cef3ce0fad30eac6aac8aea12406f95bee7d/pymupdf-1.26.3-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:759b75d2f710ff4edf8d097d2e98f60e9ecef47632cead6f949b3412facdb9f0", size = 24261350, upload-time = "2025-07-02T21:29:21.733Z" },
     { url = "https://files.pythonhosted.org/packages/82/22/ecc560e4f281b5dffafbf3a81f023d268b1746d028044f495115b74a2e70/pymupdf-1.26.3-cp39-abi3-win32.whl", hash = "sha256:a839ed44742faa1cd4956bb18068fe5aae435d67ce915e901318646c4e7bbea6", size = 17116371, upload-time = "2025-07-02T21:30:23.253Z" },
     { url = "https://files.pythonhosted.org/packages/4a/26/8c72973b8833a72785cedc3981eb59b8ac7075942718bbb7b69b352cdde4/pymupdf-1.26.3-cp39-abi3-win_amd64.whl", hash = "sha256:b4cd5124d05737944636cf45fc37ce5824f10e707b0342efe109c7b6bd37a9cc", size = 18735124, upload-time = "2025-07-02T21:31:10.992Z" },
+]
+
+[[package]]
+name = "pypopulation"
+version = "2020.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/0b/1ec110bf0192827c1c7e1157739f1841bf8ee2a854f143055a0bfb0d20d8/pypopulation-2020.3.tar.gz", hash = "sha256:1fe80b99020803fe7b1083ddb5a0ed395325e04a5614650f0e7cd8cb7a2c6371", size = 10629, upload-time = "2020-10-11T19:04:57.133Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/fc/95d23d3ca48a123f5b50a963ba8fbfe1f7135ef3b308ea3d0daffea09187/pypopulation-2020.3-py3-none-any.whl", hash = "sha256:d1648d502ca87a01f7cf3a4c0be6cb5b76ba4a8320560024cf7e661c94354edf", size = 9262, upload-time = "2020-10-11T19:04:55.938Z" },
 ]
 
 [[package]]
@@ -1707,7 +1725,9 @@ dependencies = [
     { name = "atproto" },
     { name = "joblib" },
     { name = "pillow" },
+    { name = "pycountry" },
     { name = "pymupdf" },
+    { name = "pypopulation" },
     { name = "pysbd" },
     { name = "python-docx" },
     { name = "python-dotenv" },
@@ -1725,7 +1745,9 @@ requires-dist = [
     { name = "atproto", specifier = ">=0.0.61" },
     { name = "joblib", specifier = ">=1.5.1" },
     { name = "pillow", specifier = ">=11.3.0" },
+    { name = "pycountry", specifier = ">=24.6.1" },
     { name = "pymupdf", specifier = ">=1.26.3" },
+    { name = "pypopulation", specifier = ">=2020.3" },
     { name = "pysbd", specifier = ">=0.3.4" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },

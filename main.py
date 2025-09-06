@@ -2,9 +2,9 @@ import io
 import json
 import os
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
+from datetime import date
+from functools import partial
 from io import BytesIO
-from time import sleep
 
 import pymupdf
 import pysbd
@@ -19,48 +19,77 @@ from docx import Document
 from docx.table import Table
 from dotenv import load_dotenv
 from PIL import Image as PilImage
-from tweepy.errors import TooManyRequests, Forbidden
+from pycountry import countries
+from pypopulation import get_population_a3
+from tweepy.errors import Forbidden, TooManyRequests
 
 load_dotenv()
 
+ns = {"m": "http://www.loc.gov/MARC21/slim"}
 
-def extract_marc_data(xml_content):
+
+def get_field(record, tag, code=None, multiple=True):
+    query = f'.//m:datafield[@tag="{tag}"]' + (
+        f'/m:subfield[@code="{code}"]' if code else ""
+    )
+    fields = record.findall(query, ns)
+    fields = [field.text.strip(":").strip() for field in fields if field.text]
+    if not multiple:
+        fields = fields[0] if fields else None
+    return fields
+
+
+def marc_xml_to_reports(xml_content):
     root = ET.fromstring(xml_content)
-    ns = {"m": "http://www.loc.gov/MARC21/slim"}
 
     results = []
     for record in root.findall(".//m:record", ns):
-
-        def get_field(tag, code=None, multiple=True):
-            query = f'.//m:datafield[@tag="{tag}"]' + (
-                f'/m:subfield[@code="{code}"]' if code else ""
-            )
-            fields = record.findall(query, ns)
-            fields = [field.text.strip(":").strip() for field in fields if field.text]
-            if not multiple:
-                fields = fields[0] if fields else None
-            return fields
-
+        _get_field = partial(get_field, record)
         id = record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
-        titles = get_field(245, "a") + get_field(245, "b") + get_field(245, "c")
+        titles = _get_field(245, "a") + _get_field(245, "b") + _get_field(245, "c")
         titles = [t.strip(":").strip("/").strip() for t in titles]
         title = " – ".join(titles)
-        pages = get_field("300", "a", False)
+        pages = _get_field("300", "a", False)
         pages = pages.replace("[", "").replace("]", "") if pages else None
-        pdf_urls = get_field("856", "u")
+        pdf_urls = _get_field("856", "u")
         pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
         if not pdf_urls:
             continue
 
         record = {
             "id": id,
-            "symbol": get_field("191", "a", False),
+            "symbol": _get_field("191", "a", False),
             "title": title,
-            "date": get_field("269", "a", False),
+            "date": _get_field("269", "a", False),
             "pages": pages,
-            "summary": get_field("500", "a"),
-            "keywords": get_field("650", "a"),
+            "summary": _get_field("500", "a"),
+            "keywords": _get_field("650", "a"),
             "pdf_url": pdf_urls[0],
+        }
+        results.append(record)
+    return results
+
+
+def marc_xml_to_resolutions(xml_content):
+    root = ET.fromstring(xml_content)
+
+    results = []
+    for record in root.findall(".//m:record", ns):
+        _get_field = partial(get_field, record)
+        id = record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
+        titles = _get_field(245, "a") + _get_field(245, "b") + _get_field(245, "c")
+        titles = [t.strip(":").strip("/").strip() for t in titles]
+        title = " – ".join(titles)
+        votes = dict(zip(_get_field(967, "c", True), _get_field(967, "d", True)))
+        draft_resolution = _get_field("993", "a", False)
+        record = {
+            "id": id,
+            "symbol": _get_field("191", "a", False),
+            "title": title,
+            "date": _get_field("269", "a", False),
+            "votes": votes,
+            "resolution": _get_field("791", "a", False),
+            "draft_resolution": draft_resolution,
         }
         results.append(record)
     return results
@@ -111,10 +140,8 @@ def get_summary(record):
         return []
 
 
-def get_images(record, page_nrs=[0, 1]):
-    if not record["pdf_url"]:
-        return []
-    response = requests.get(record["pdf_url"], timeout=30)
+def get_images(pdf_url, page_nrs=[0, 1]):
+    response = requests.get(pdf_url, timeout=30)
     response.raise_for_status()
     if not response.content:
         return []
@@ -163,7 +190,7 @@ def chunk_text(text, max_length):
     return chunks
 
 
-def post_bsky(records):
+def post_bsky_report(records):
     client = Client("https://bsky.social")
     client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
 
@@ -196,10 +223,10 @@ def post_bsky(records):
         return
 
     record = unposted[-1]
-    print(f"posting {record['title']} from { record['date']} on bsky...")
+    print(f"posting report {record['title']} from {record['date']} on bsky...")
 
     images = []
-    for i, image in enumerate(get_images(record)):
+    for i, image in enumerate(get_images(record["pdf_url"])):
         ref = client.upload_blob(image)
         image = Image(alt=f"Screenshot of page {i} of the report", image=ref.blob)
         images.append(image)
@@ -251,7 +278,146 @@ def post_bsky(records):
                     kw.replace("'", "").lower().replace(" ", "").replace("-", ""),
                 )
         client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
-    print(f"posted {record['title']} from { record['date']} on bsky!")
+    print(f"posted {record['title']} from {record['date']} on bsky!")
+
+
+def get_flags(countries_):
+    countries_ = sorted(countries_, key=lambda c: get_population_a3(c), reverse=True)
+    flags = [countries.get(alpha_3=c).flag for c in countries_]
+    return "".join(flags)
+
+
+def post_bsky_resolution(records):
+    client = Client("https://bsky.social")
+    client.login("un-resolutions.bsky.social", os.environ["BSKY_PASSWORD"])
+
+    response = client.get_author_feed(
+        "un-resolutions.bsky.social", include_pins=False, filter="posts_no_replies"
+    )
+    feed = response.feed
+    while response.cursor is not None:
+        response = client.get_author_feed(
+            "un-resolutions.bsky.social", include_pins=False, filter="posts_no_replies"
+        )
+        feed += response.feed
+
+    entries = [entry.post.record.facets for entry in feed]
+    facets = [facet for facets in entries for facet in facets]
+    links = [
+        feat.uri
+        for facet in facets
+        for feat in facet.features
+        if isinstance(feat, Link)
+    ]
+
+    # for entry in feed:
+    #     client.delete_post(entry.post.uri)
+
+    unposted = [
+        record for record in records if not any(record["id"] in link for link in links)
+    ]
+
+    for record in unposted[::-1]:
+        if not record["draft_resolution"]:
+            continue
+        xml = requests.get(
+            "https://digitallibrary.un.org/search",
+            params={
+                "cc": "Draft resolutions and decisions",
+                "ln": "en",
+                "p": record["draft_resolution"],
+                "sf": "year",
+                "rg": 20,
+                "c": "Draft resolutions and decisions",
+                "of": "xm",
+            },
+        ).text
+        root = ET.fromstring(xml)
+        dr_records = root.findall(".//m:record", ns)
+        assert len(dr_records) <= 1, (
+            f"expecting at most 1 draft resolution record, found {len(dr_records)}"
+        )
+        if dr_records:
+            dr_record = dr_records[0]
+            dr_id = dr_record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
+            _get_field = partial(get_field, dr_record)
+            summary = (_get_field("500", "a"),)
+            keywords = _get_field("650", "a")
+            authors = _get_field("710", "a")
+            pdf_urls = _get_field("856", "u")
+            pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
+            if pdf_urls:
+                pdf_url = pdf_urls[0]
+                break
+    else:
+        return
+    print(f"posting resolution {record['title']} from {record['date']} on bsky...")
+
+    MAX_LENGTH = 300
+    BASE_LENGTH = 80
+    title = (
+        record["title"][: MAX_LENGTH - BASE_LENGTH - 3] + "..."
+        if len(record["title"]) + BASE_LENGTH > MAX_LENGTH
+        else record["title"]
+    )
+    date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
+    text = (
+        client_utils.TextBuilder()
+        .text(f"New resolution adopted! From {date_}:\n\n")
+        .text(f"❞ {title}")
+    )
+    if authors:
+        authors = [countries.get(name=a).alpha_3 for a in authors]
+        text.text(f"\n\nAuthored by {get_flags(authors)}")
+    text.text("\n\n→ ").link(
+        "Read the draft resolution here",
+        f"https://digitallibrary.un.org/record/{dr_id}?ln=en&v=pdf",
+    )
+
+    images = []
+    for i, image in enumerate(get_images(pdf_url)):
+        ref = client.upload_blob(image)
+        image = Image(alt=f"Screenshot of page {i} of the report", image=ref.blob)
+        images.append(image)
+
+    post = client.send_post(text, embed=Main(images=images) if images else None)
+    root = StrongRef(cid=post.cid, uri=post.uri)
+    prev = root
+
+    votes = "Votes\n\n"
+    for letter, vote in [("Y", "Yes"), ("N", "No"), ("A", "Abstention")]:
+        countries_ = [c for c, v in record["votes"].items() if v == letter]
+        votes += f"{len(countries_)}x {vote}{': ' if countries_ else ''}{get_flags(countries_)}\n"
+    text = (
+        client_utils.TextBuilder()
+        .text(votes)
+        .text("\n→ ")
+        .link(
+            "Find voting data and transcript here",
+            f"https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf",
+        )
+    )
+    post = client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
+    prev = StrongRef(cid=post.cid, uri=post.uri)
+
+    for summary_text in summary:
+        chunks = chunk_text(summary_text, MAX_LENGTH - 10)
+        for chunk in chunks:
+            post2 = client.send_post(chunk, reply_to=ReplyRef(parent=prev, root=root))
+            prev = StrongRef(cid=post2.cid, uri=post2.uri)
+
+    if len(keywords) > 0:
+        text = client_utils.TextBuilder()
+        for kw in keywords:
+            if len(text.build_text() + kw.replace(" ", "")) + 2 < MAX_LENGTH:
+                text.tag(
+                    "#"
+                    + kw.replace("'", "").title().replace(" ", "").replace("-", "")
+                    + " ",
+                    kw.replace("'", "").lower().replace(" ", "").replace("-", ""),
+                )
+        client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
+    print(f"posted {record['title']} from {record['date']} on bsky!")
 
 
 def post_x(records):
@@ -268,7 +434,7 @@ def post_x(records):
         return
 
     record = unposted[-1]
-    print(f"posting {record['title']} from { record['date']} on x...")
+    print(f"posting {record['title']} from {record['date']} on x...")
 
     auth = tweepy.OAuth1UserHandler(
         consumer_key=os.environ["X_API_KEY"],
@@ -294,7 +460,7 @@ def post_x(records):
             tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
             text += f"#{tag} "
     media_ids = []
-    for i, image in enumerate(get_images(record)):
+    for i, image in enumerate(get_images(record["pdf_url"])):
         media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
         media_ids.append(media.media_id)
     client.create_tweet(
@@ -303,7 +469,7 @@ def post_x(records):
     )
     posted = [record["id"]] + posted  # , datetime.now().isoformat()]]
     json.dump({"x": posted}, open("posted.json", "w"), indent=2)
-    print(f"posted {record['title']} from { record['date']} on x!")
+    print(f"posted {record['title']} from {record['date']} on x!")
 
 
 if __name__ == "__main__":
@@ -319,16 +485,30 @@ if __name__ == "__main__":
             "of": "xm",
         },
     ).text
-    records = extract_marc_data(xml)
+    reports = marc_xml_to_reports(xml)
+    print("retrieving resolutions ...")
+    xml = requests.get(
+        "https://digitallibrary.un.org/search",
+        params={
+            "cc": "Voting Data",
+            "ln": "en",
+            "sf": "year",
+            "rg": 20,
+            "c": "Voting Data",
+            "of": "xm",
+        },
+    ).text
+    resolutions = marc_xml_to_resolutions(xml)
     exceptions = []
     try:
         print("posting on bsky ...")
-        post_bsky(records)
+        post_bsky_report(reports)
+        post_bsky_resolution(resolutions)
     except Exception as e:
         exceptions.append(e)
     try:
         print("posting on x ...")
-        post_x(records)
+        post_x(reports)
     except (TooManyRequests, Forbidden) as e:
         print(e)
     except Exception as e:

@@ -1,4 +1,4 @@
-# 🇺🇳 UN TWEETED
+# UN TWEETED 🇺🇳
 
 Bluesky + X bots that posts about new reports and resolutions as they are released.
 

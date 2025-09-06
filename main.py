@@ -286,6 +286,40 @@ def get_flags(countries_):
     flags = [countries.get(alpha_3=c).flag for c in countries_]
     return "".join(flags)
 
+def get_draft_resolution(record):
+    if not record["draft_resolution"]:
+        return None
+    xml = requests.get(
+        "https://digitallibrary.un.org/search",
+        params={
+            "cc": "Draft resolutions and decisions",
+            "ln": "en",
+            "p": record["draft_resolution"],
+            "sf": "year",
+            "rg": 20,
+            "c": "Draft resolutions and decisions",
+            "of": "xm",
+        },
+    ).text
+    root = ET.fromstring(xml)
+    dr_records = root.findall(".//m:record", ns)
+    assert len(dr_records) <= 1, (
+        f"expecting at most 1 draft resolution record, found {len(dr_records)}"
+    )
+    if not dr_records:
+        return None
+    dr_record = dr_records[0]
+    _get_field = partial(get_field, dr_record)
+    pdf_urls = _get_field("856", "u")
+    pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
+    return {
+        "id": dr_record.find('.//m:controlfield[@tag="001"]', ns).text.strip(),
+        "summary": _get_field("500", "a"),
+        "keywords": _get_field("650", "a"),
+        "authors": _get_field("710", "a"),
+        "pdf_url": pdf_urls[0] if pdf_urls else None
+
+    }
 
 def post_bsky_resolution(records):
     client = Client("https://bsky.social")
@@ -318,37 +352,9 @@ def post_bsky_resolution(records):
     ]
 
     for record in unposted[::-1]:
-        if not record["draft_resolution"]:
-            continue
-        xml = requests.get(
-            "https://digitallibrary.un.org/search",
-            params={
-                "cc": "Draft resolutions and decisions",
-                "ln": "en",
-                "p": record["draft_resolution"],
-                "sf": "year",
-                "rg": 20,
-                "c": "Draft resolutions and decisions",
-                "of": "xm",
-            },
-        ).text
-        root = ET.fromstring(xml)
-        dr_records = root.findall(".//m:record", ns)
-        assert len(dr_records) <= 1, (
-            f"expecting at most 1 draft resolution record, found {len(dr_records)}"
-        )
-        if dr_records:
-            dr_record = dr_records[0]
-            dr_id = dr_record.find('.//m:controlfield[@tag="001"]', ns).text.strip()
-            _get_field = partial(get_field, dr_record)
-            summary = (_get_field("500", "a"),)
-            keywords = _get_field("650", "a")
-            authors = _get_field("710", "a")
-            pdf_urls = _get_field("856", "u")
-            pdf_urls = [url for url in pdf_urls if url.endswith("-EN.pdf")]
-            if pdf_urls:
-                pdf_url = pdf_urls[0]
-                break
+        dr_record = get_draft_resolution(record)
+        if dr_record["pdf_url"]:
+            break
     else:
         return
     print(f"posting resolution {record['title']} from {record['date']} on bsky...")
@@ -366,16 +372,16 @@ def post_bsky_resolution(records):
         .text(f"New resolution adopted! From {date_}:\n\n")
         .text(f"❞ {title}")
     )
-    if authors:
-        authors = [countries.get(name=a).alpha_3 for a in authors]
+    if dr_record["authors"]:
+        authors = [countries.get(name=a).alpha_3 for a in dr_record["authors"]]
         text.text(f"\n\nAuthored by {get_flags(authors)}")
     text.text("\n\n→ ").link(
         "Read the draft resolution here",
-        f"https://digitallibrary.un.org/record/{dr_id}?ln=en&v=pdf",
+        f"https://digitallibrary.un.org/record/{dr_record['id']}?ln=en&v=pdf",
     )
 
     images = []
-    for i, image in enumerate(get_images(pdf_url)):
+    for i, image in enumerate(get_images(dr_record["pdf_url"])):
         ref = client.upload_blob(image)
         image = Image(alt=f"Screenshot of page {i} of the report", image=ref.blob)
         images.append(image)
@@ -400,15 +406,15 @@ def post_bsky_resolution(records):
     post = client.send_post(text, reply_to=ReplyRef(parent=prev, root=root))
     prev = StrongRef(cid=post.cid, uri=post.uri)
 
-    for summary_text in summary:
+    for summary_text in dr_record["summary"]:
         chunks = chunk_text(summary_text, MAX_LENGTH - 10)
         for chunk in chunks:
             post2 = client.send_post(chunk, reply_to=ReplyRef(parent=prev, root=root))
             prev = StrongRef(cid=post2.cid, uri=post2.uri)
 
-    if len(keywords) > 0:
+    if len(dr_record["keywords"]) > 0:
         text = client_utils.TextBuilder()
-        for kw in keywords:
+        for kw in dr_record["keywords"]:
             if len(text.build_text() + kw.replace(" ", "")) + 2 < MAX_LENGTH:
                 text.tag(
                     "#"
@@ -420,7 +426,7 @@ def post_bsky_resolution(records):
     print(f"posted {record['title']} from {record['date']} on bsky!")
 
 
-def post_x(records):
+def post_x_report(records):
     client = tweepy.Client(
         bearer_token=os.environ["X_BEARER_TOKEN"],
         consumer_key=os.environ["X_API_KEY"],
@@ -434,7 +440,7 @@ def post_x(records):
         return
 
     record = unposted[-1]
-    print(f"posting {record['title']} from {record['date']} on x...")
+    print(f"posting report {record['title']} from {record['date']} on x...")
 
     auth = tweepy.OAuth1UserHandler(
         consumer_key=os.environ["X_API_KEY"],
@@ -467,9 +473,74 @@ def post_x(records):
         text=text,
         media_ids=media_ids,
     )
-    posted = [record["id"]] + posted  # , datetime.now().isoformat()]]
+    posted = [record["id"]] + posted
     json.dump({"x": posted}, open("posted.json", "w"), indent=2)
-    print(f"posted {record['title']} from {record['date']} on x!")
+    print(f"posted report {record['title']} from {record['date']} on x!")
+
+
+def post_x_resolution(records):
+    client = tweepy.Client(
+        bearer_token=os.environ["X_BEARER_TOKEN_2"],
+        consumer_key=os.environ["X_API_KEY_2"],
+        consumer_secret=os.environ["X_API_KEY_SECRET_2"],
+        access_token=os.environ["X_ACCESS_TOKEN_2"],
+        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET_2"],
+    )
+    posted = json.load(open("posted.json"))["x"]
+    unposted = [record for record in records if record["id"] not in posted]
+    if not unposted:
+        return
+
+    for record in unposted[::-1]:
+        dr_record = get_draft_resolution(record)
+        if dr_record["pdf_url"]:
+            break
+    else:
+        return
+    print(f"posting resolution {record['title']} from {record['date']} on x...")
+
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key=os.environ["X_API_KEY_2"],
+        consumer_secret=os.environ["X_API_KEY_SECRET_2"],
+        access_token=os.environ["X_ACCESS_TOKEN_2"],
+        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET_2"],
+    )
+    api = tweepy.API(auth)
+
+    date_ = date.fromisoformat(record["date"]).strftime("%A, %b %-d")
+    text = (
+        f"New resolution adopted! From {date_}:\n\n"
+        f"❞ {record['title']}\n\n"
+    )
+    if dr_record["authors"]:
+        authors = [countries.get(name=a).alpha_3 for a in dr_record["authors"]]
+        text += f"Authored by {get_flags(authors)}\n\n"
+    text += f"→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf (draft resolution)\n\n"
+    
+    text += "Votes:\n\n"
+    for letter, vote in [("Y", "Yes"), ("N", "No"), ("A", "Abstention")]:
+        countries_ = [c for c, v in record["votes"].items() if v == letter]
+        text += f"{len(countries_)}x {vote}{': ' if countries_ else ''}{get_flags(countries_)}\n"
+    text += f"\n→ https://digitallibrary.un.org/record/{record['id']}?ln=en&v=pdf (voting data and transcript)"
+
+    for summary_text in dr_record["summary"]:
+        text += f"{summary_text}\n\n"
+    if len(dr_record["keywords"]) > 0:
+        text += "\n\n"
+        for kw in dr_record["keywords"]:
+            tag = kw.replace("'", "").title().replace(" ", "").replace("-", "")
+            text += f"#{tag} "
+    media_ids = []
+    for i, image in enumerate(get_images(dr_record["pdf_url"])):
+        media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
+        media_ids.append(media.media_id)
+    client.create_tweet(
+        text=text,
+        media_ids=media_ids,
+    )
+    posted = [record["id"]] + posted
+    json.dump({"x": posted}, open("posted.json", "w"), indent=2)
+    print(f"posted resolution {record['title']} from {record['date']} on x!")
 
 
 if __name__ == "__main__":
@@ -502,15 +573,16 @@ if __name__ == "__main__":
     exceptions = []
     try:
         print("posting on bsky ...")
-        post_bsky_report(reports)
-        post_bsky_resolution(resolutions)
+        # post_bsky_report(reports)
+        # post_bsky_resolution(resolutions)
     except Exception as e:
         exceptions.append(e)
     try:
         print("posting on x ...")
-        post_x(reports)
-    except (TooManyRequests, Forbidden) as e:
-        print(e)
+        post_x_report(reports)
+        post_x_resolution(resolutions)
+    # except (TooManyRequests, Forbidden) as e:
+    #     print(e)
     except Exception as e:
         exceptions.append(e)
     for e in exceptions:

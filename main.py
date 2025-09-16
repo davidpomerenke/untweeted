@@ -10,7 +10,7 @@ import pymupdf
 import pysbd
 import requests
 import tweepy
-from atproto import Client, client_utils
+from atproto import Client, Request, client_utils
 from atproto_client.models.app.bsky.embed.images import Image, Main
 from atproto_client.models.app.bsky.feed.post import ReplyRef
 from atproto_client.models.app.bsky.richtext.facet import Link
@@ -18,6 +18,7 @@ from atproto_client.models.com.atproto.repo.strong_ref import Main as StrongRef
 from docx import Document
 from docx.table import Table
 from dotenv import load_dotenv
+from httpx import Timeout
 from PIL import Image as PilImage
 from pycountry import countries
 from pypopulation import get_population_a3
@@ -26,6 +27,7 @@ from tweepy.errors import Forbidden, TooManyRequests
 load_dotenv()
 
 ns = {"m": "http://www.loc.gov/MARC21/slim"}
+request = Request(timeout=Timeout(timeout=5))
 
 
 def get_field(record, tag, code=None, multiple=True):
@@ -247,7 +249,7 @@ def get_draft_resolution(record):
 
 
 def post_bsky_report(records):
-    client = Client("https://bsky.social")
+    client = Client("https://bsky.social", request=request)
     client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
 
     response = client.get_author_feed(
@@ -338,7 +340,7 @@ def post_bsky_report(records):
 
 
 def post_bsky_resolution(records):
-    client = Client("https://bsky.social")
+    client = Client("https://bsky.social", request=request)
     client.login("un-resolutions.bsky.social", os.environ["BSKY_PASSWORD"])
 
     response = client.get_author_feed(

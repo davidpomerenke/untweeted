@@ -27,8 +27,6 @@ from tweepy.errors import Forbidden, TooManyRequests
 load_dotenv()
 
 ns = {"m": "http://www.loc.gov/MARC21/slim"}
-request = Request(timeout=Timeout(timeout=5))
-
 
 def get_field(record, tag, code=None, multiple=True):
     query = f'.//m:datafield[@tag="{tag}"]' + (
@@ -249,7 +247,7 @@ def get_draft_resolution(record):
 
 
 def post_bsky_report(records):
-    client = Client("https://bsky.social", request=request)
+    client = Client("https://bsky.social")
     client.login("un-reports.bsky.social", os.environ["BSKY_PASSWORD"])
 
     response = client.get_author_feed(
@@ -258,7 +256,10 @@ def post_bsky_report(records):
     feed = response.feed
     while response.cursor is not None:
         response = client.get_author_feed(
-            "un-reports.bsky.social", include_pins=False, filter="posts_no_replies"
+            "un-reports.bsky.social",
+            include_pins=False,
+            filter="posts_no_replies",
+            cursor=response.cursor,
         )
         feed += response.feed
 
@@ -340,7 +341,7 @@ def post_bsky_report(records):
 
 
 def post_bsky_resolution(records):
-    client = Client("https://bsky.social", request=request)
+    client = Client("https://bsky.social")
     client.login("un-resolutions.bsky.social", os.environ["BSKY_PASSWORD"])
 
     response = client.get_author_feed(
@@ -349,7 +350,10 @@ def post_bsky_resolution(records):
     feed = response.feed
     while response.cursor is not None:
         response = client.get_author_feed(
-            "un-resolutions.bsky.social", include_pins=False, filter="posts_no_replies"
+            "un-resolutions.bsky.social",
+            include_pins=False,
+            filter="posts_no_replies",
+            cursor=response.cursor,
         )
         feed += response.feed
 

@@ -395,7 +395,9 @@ def post_bsky_resolution(records):
         countries_ = [countries.get(name=a) for a in dr_record["authors"]]
         countries_ = [c.alpha_3 for c in countries_ if c]
         if countries_:
-            text.text(f"\n\nAuthored by {get_flags(countries_)}")
+            flag_text = f"\n\nAuthored by {get_flags(countries_)}"
+            if BASE_LENGTH + len(title) + len(flag_text) <= MAX_LENGTH:
+                text.text(flag_text)
 
     text.text("\n\n→ ").link(
         "Read the draft resolution here",

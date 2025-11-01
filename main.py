@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from functools import partial
 from io import BytesIO
+from urllib.parse import urlencode
 
 import pymupdf
 import pysbd
@@ -20,6 +21,7 @@ from docx.table import Table
 from dotenv import load_dotenv
 from httpx import Timeout
 from PIL import Image as PilImage
+from playwright.sync_api import sync_playwright
 from pycountry import countries
 from pypopulation import get_population_a3
 from tweepy.errors import Forbidden, TooManyRequests
@@ -27,6 +29,42 @@ from tweepy.errors import Forbidden, TooManyRequests
 load_dotenv()
 
 ns = {"m": "http://www.loc.gov/MARC21/slim"}
+
+
+def fetch_with_browser(url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+            ],
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+        )
+        page = context.new_page()
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'});
+        """)
+        page.goto(url, wait_until="networkidle", timeout=60000)
+        # Get the raw document body text
+        xml = page.evaluate("() => document.body.innerText").strip()
+        browser.close()
+        # Remove browser message line if present
+        lines = xml.split("\n")
+        xml = "\n".join(
+            l for l in lines if not l.startswith("This XML file does not appear")
+        )
+        # Add XML declaration if missing
+        if not xml.startswith("<?xml"):
+            xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml
+        return xml
+
 
 def get_field(record, tag, code=None, multiple=True):
     query = f'.//m:datafield[@tag="{tag}"]' + (
@@ -214,18 +252,17 @@ def get_votes(record):
 def get_draft_resolution(record):
     if not record["draft_resolution"]:
         return None
-    xml = requests.get(
-        "https://digitallibrary.un.org/search",
-        params={
-            "cc": "Draft resolutions and decisions",
-            "ln": "en",
-            "p": f"documentsymbol:{record['draft_resolution']}",
-            "sf": "year",
-            "rg": 20,
-            "c": "Draft resolutions and decisions",
-            "of": "xm",
-        },
-    ).text
+    params = {
+        "cc": "Draft resolutions and decisions",
+        "ln": "en",
+        "p": f"documentsymbol:{record['draft_resolution']}",
+        "sf": "year",
+        "rg": 20,
+        "c": "Draft resolutions and decisions",
+        "of": "xm",
+    }
+    url = f"https://digitallibrary.un.org/search?{urlencode(params)}"
+    xml = fetch_with_browser(url)
     root = ET.fromstring(xml)
     dr_records = root.findall(".//m:record", ns)
     assert len(dr_records) <= 1, (
@@ -561,30 +598,28 @@ def post_x_resolution(records):
 
 if __name__ == "__main__":
     print("retrieving reports ...")
-    xml = requests.get(
-        "https://digitallibrary.un.org/search",
-        params={
-            "cc": "Reports",
-            "ln": "en",
-            "sf": "year",
-            "rg": 20,
-            "c": "Reports",
-            "of": "xm",
-        },
-    ).text
+    params = {
+        "cc": "Reports",
+        "ln": "en",
+        "sf": "year",
+        "rg": 20,
+        "c": "Reports",
+        "of": "xm",
+    }
+    url = f"https://digitallibrary.un.org/search?{urlencode(params)}"
+    xml = fetch_with_browser(url)
     reports = marc_xml_to_reports(xml)
     print("retrieving resolutions ...")
-    xml = requests.get(
-        "https://digitallibrary.un.org/search",
-        params={
-            "cc": "Voting Data",
-            "ln": "en",
-            "sf": "year",
-            "rg": 20,
-            "c": "Voting Data",
-            "of": "xm",
-        },
-    ).text
+    params = {
+        "cc": "Voting Data",
+        "ln": "en",
+        "sf": "year",
+        "rg": 20,
+        "c": "Voting Data",
+        "of": "xm",
+    }
+    url = f"https://digitallibrary.un.org/search?{urlencode(params)}"
+    xml = fetch_with_browser(url)
     resolutions = marc_xml_to_resolutions(xml)
     exceptions = []
     try:

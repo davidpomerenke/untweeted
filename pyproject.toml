@@ -8,6 +8,7 @@ dependencies = [
     "atproto>=0.0.61",
     "joblib>=1.5.1",
     "pillow>=11.3.0",
+    "playwright>=1.49.1",
     "pycountry>=24.6.1",
     "pymupdf>=1.26.3",
     "pypopulation>=2020.3",

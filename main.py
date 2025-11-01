@@ -31,7 +31,7 @@ load_dotenv()
 ns = {"m": "http://www.loc.gov/MARC21/slim"}
 
 
-def fetch_with_browser(url):
+def fetch_url_with_playwright(url, wait_until="networkidle", return_text=False):
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -51,19 +51,26 @@ def fetch_with_browser(url):
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'});
         """)
-        page.goto(url, wait_until="networkidle", timeout=60000)
-        # Get the raw document body text
-        xml = page.evaluate("() => document.body.innerText").strip()
+        response = page.goto(url, wait_until=wait_until, timeout=60000)
+        if return_text:
+            result = page.evaluate("() => document.body.innerText").strip()
+        else:
+            result = response.body()
         browser.close()
-        # Remove browser message line if present
-        lines = xml.split("\n")
-        xml = "\n".join(
-            l for l in lines if not l.startswith("This XML file does not appear")
-        )
-        # Add XML declaration if missing
-        if not xml.startswith("<?xml"):
-            xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml
-        return xml
+        return result
+
+
+def fetch_with_browser(url):
+    xml = fetch_url_with_playwright(url, wait_until="networkidle", return_text=True)
+    # Remove browser message line if present
+    lines = xml.split("\n")
+    xml = "\n".join(
+        l for l in lines if not l.startswith("This XML file does not appear")
+    )
+    # Add XML declaration if missing
+    if not xml.startswith("<?xml"):
+        xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml
+    return xml
 
 
 def get_field(record, tag, code=None, multiple=True):
@@ -163,10 +170,9 @@ def pdf_to_image(doc, page):
 
 def get_summary(record):
     try:
-        response = requests.get(
-            f"https://documents.un.org/api/symbol/access?s={record['symbol']}&l=en&t=docx"
-        )
-        doc = Document(BytesIO(response.content))
+        url = f"https://documents.un.org/api/symbol/access?s={record['symbol']}&l=en&t=docx"
+        content = fetch_url_with_playwright(url, wait_until="load")
+        doc = Document(BytesIO(content))
         tables = [c for c in doc.iter_inner_content() if isinstance(c, Table)]
         for table in tables:
             row_texts = [
@@ -180,11 +186,37 @@ def get_summary(record):
 
 
 def get_images(pdf_url, page_nrs=[0, 1]):
-    response = requests.get(pdf_url, timeout=30)
-    response.raise_for_status()
-    if not response.content:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+            ],
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        )
+        page = context.new_page()
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        """)
+        response = page.goto(pdf_url, wait_until="networkidle", timeout=60000)
+        # Wait a bit more for any JavaScript challenges to complete
+        page.wait_for_timeout(3000)
+        # Check if we got a PDF by looking at content type
+        if 'application/pdf' in response.headers.get('content-type', ''):
+            pdf_content = response.body()
+        else:
+            # Try to get it again after waiting
+            pdf_content = page.evaluate("() => fetch(window.location.href).then(r => r.arrayBuffer()).then(b => Array.from(new Uint8Array(b)))")
+            pdf_content = bytes(pdf_content) if pdf_content else None
+        browser.close()
+    
+    if not pdf_content:
         return []
-    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    doc = pymupdf.open(stream=pdf_content, filetype="pdf")
     images = [pdf_to_image(doc, page_nr) for page_nr in page_nrs]
     images = [image for image in images if image is not None]
     doc.close()
@@ -526,10 +558,10 @@ def post_x_report(records):
     for i, image in enumerate(get_images(record["pdf_url"])):
         media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
         media_ids.append(media.media_id)
-    client.create_tweet(
-        text=text,
-        media_ids=media_ids,
-    )
+    tweet_params = {"text": text}
+    if media_ids:
+        tweet_params["media_ids"] = media_ids
+    client.create_tweet(**tweet_params)
     posted = [record["id"]] + posted
     json.dump({"x": posted}, open("posted.json", "w"), indent=2)
     print(f"posted report {record['title']} from {record['date']} on x!")
@@ -587,10 +619,10 @@ def post_x_resolution(records):
     for i, image in enumerate(get_images(dr_record["pdf_url"])):
         media = api.simple_upload(filename=f"page_{i}.jpeg", file=image)
         media_ids.append(media.media_id)
-    client.create_tweet(
-        text=text,
-        media_ids=media_ids,
-    )
+    tweet_params = {"text": text}
+    if media_ids:
+        tweet_params["media_ids"] = media_ids
+    client.create_tweet(**tweet_params)
     posted = [record["id"]] + posted
     json.dump({"x": posted}, open("posted.json", "w"), indent=2)
     print(f"posted resolution {record['title']} from {record['date']} on x!")
@@ -622,12 +654,12 @@ if __name__ == "__main__":
     xml = fetch_with_browser(url)
     resolutions = marc_xml_to_resolutions(xml)
     exceptions = []
-    try:
-        print("posting on bsky ...")
-        post_bsky_report(reports)
-        post_bsky_resolution(resolutions)
-    except Exception as e:
-        exceptions.append(e)
+    # try:
+    #     print("posting on bsky ...")
+    #     post_bsky_report(reports)
+    #     post_bsky_resolution(resolutions)
+    # except Exception as e:
+    #     exceptions.append(e)
     try:
         print("posting on x ...")
         post_x_report(reports)

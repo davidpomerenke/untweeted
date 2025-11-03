@@ -125,7 +125,12 @@ def marc_xml_to_resolutions(xml_content):
         titles = _get_field(245, "a") + _get_field(245, "b") + _get_field(245, "c")
         titles = [t.strip(":").strip("/").strip() for t in titles]
         title = " – ".join(titles)
-        votes = dict(zip(_get_field(967, "c", True), _get_field(967, "d", True)))
+        votes = {}
+        for field in record.findall('.//m:datafield[@tag="967"]', ns):
+            country = field.find('.//m:subfield[@code="c"]', ns)
+            vote = field.find('.//m:subfield[@code="d"]', ns)
+            if country is not None and vote is not None:
+                votes[country.text.strip()] = vote.text.strip()
         draft_resolution = _get_field("993", "a", False)
         record = {
             "id": id,
@@ -262,8 +267,8 @@ def chunk_text(text, max_length):
 
 
 def get_flags(countries_):
-    countries_ = sorted(countries_, key=lambda c: get_population_a3(c), reverse=True)
-    flags = [countries.get(alpha_3=c).flag for c in countries_]
+    countries_ = sorted(countries_, key=lambda c: get_population_a3(c) or 0, reverse=True)
+    flags = [countries.get(alpha_3=c).flag for c in countries_ if countries.get(alpha_3=c)]
     return "".join(flags)
 
 

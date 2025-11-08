@@ -61,7 +61,8 @@ def fetch_url_with_playwright(url, wait_until="networkidle", return_text=False):
 
 
 def fetch_with_browser(url):
-    xml = fetch_url_with_playwright(url, wait_until="networkidle", return_text=True)
+    content = fetch_url_with_playwright(url, wait_until="networkidle", return_text=False)
+    xml = content.decode('utf-8')
     # Remove browser message line if present
     lines = xml.split("\n")
     xml = "\n".join(
@@ -191,33 +192,8 @@ def get_summary(record):
 
 
 def get_images(pdf_url, page_nrs=[0, 1]):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-            ],
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
-        )
-        page = context.new_page()
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        """)
-        response = page.goto(pdf_url, wait_until="networkidle", timeout=60000)
-        # Wait a bit more for any JavaScript challenges to complete
-        page.wait_for_timeout(3000)
-        # Check if we got a PDF by looking at content type
-        if 'application/pdf' in response.headers.get('content-type', ''):
-            pdf_content = response.body()
-        else:
-            # Try to get it again after waiting
-            pdf_content = page.evaluate("() => fetch(window.location.href).then(r => r.arrayBuffer()).then(b => Array.from(new Uint8Array(b)))")
-            pdf_content = bytes(pdf_content) if pdf_content else None
-        browser.close()
+    response = requests.get(pdf_url, timeout=60)
+    pdf_content = response.content if response.status_code == 200 else None
     
     if not pdf_content:
         return []
@@ -445,7 +421,7 @@ def post_bsky_resolution(records):
 
     for record in records[::-1]:
         dr_record = get_draft_resolution(record)
-        if dr_record["pdf_url"] and not any(dr_record["id"] in link for link in links):
+        if dr_record and dr_record["pdf_url"] and not any(dr_record["id"] in link for link in links):
             break
     else:
         return
@@ -587,7 +563,7 @@ def post_x_resolution(records):
 
     for record in unposted[::-1]:
         dr_record = get_draft_resolution(record)
-        if dr_record["pdf_url"]:
+        if dr_record and dr_record["pdf_url"]:
             break
     else:
         return
@@ -659,12 +635,12 @@ if __name__ == "__main__":
     xml = fetch_with_browser(url)
     resolutions = marc_xml_to_resolutions(xml)
     exceptions = []
-    # try:
-    #     print("posting on bsky ...")
-    #     post_bsky_report(reports)
-    #     post_bsky_resolution(resolutions)
-    # except Exception as e:
-    #     exceptions.append(e)
+    try:
+        print("posting on bsky ...")
+        post_bsky_report(reports)
+        post_bsky_resolution(resolutions)
+    except Exception as e:
+        exceptions.append(e)
     try:
         print("posting on x ...")
         post_x_report(reports)
